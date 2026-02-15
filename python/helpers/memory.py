@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, List, Sequence
+from typing import Any, List, Sequence, Optional, Callable, Dict, Tuple
 from langchain.storage import InMemoryByteStore, LocalFileStore
 from langchain.embeddings import CacheBackedEmbeddings
 from python.helpers import guids
@@ -10,11 +10,13 @@ from langchain_community.vectorstores import FAISS
 # faiss needs to be patched for python 3.12 on arm #TODO remove once not needed
 from python.helpers import faiss_monkey_patch
 import faiss
+from concurrent.futures import run_in_executor
 
 
 from langchain_community.docstore.in_memory import InMemoryDocstore
 from langchain_community.vectorstores.utils import (
     DistanceStrategy,
+    _filter_apply,
 )
 from langchain_core.embeddings import Embeddings
 
@@ -49,6 +51,91 @@ class MyFaiss(FAISS):
 
     def get_all_docs(self):
         return self.docstore._dict  # type: ignore
+
+    # Override to handle corrupted index (documents in FAISS index but not in docstore)
+    def similarity_search_with_score_by_vector(
+        self,
+        embedding: List[float],
+        k: int = 4,
+        filter: Optional[Union[Callable, Dict[str, Any]]] = None,
+        fetch_k: int = 20,
+        **kwargs: Any,
+    ) -> List[Tuple[Document, float]]:
+        # Get more results than k to handle potential corrupted documents
+        _k = k * 2 if k else fetch_k
+        
+        try:
+            return super().similarity_search_with_score_by_vector(
+                embedding, _k, filter, fetch_k, **kwargs
+            )
+        except ValueError as e:
+            if "Could not find document for id" in str(e):
+                # Handle corrupted index - try to get valid documents only
+                from langchain_core.vectorstores.utils import _results_to_docs_and_scores
+                
+                # Get embeddings and IDs from FAISS
+                faiss = self.faiss_index
+                if _k > faiss.ntotal:
+                    _k = faiss.ntotal
+                
+                distances, indices = faiss.search(np.array([embedding]), _k)
+                
+                # Filter out invalid indices and try to get documents
+                docs_and_scores = []
+                for i, (_id, dist) in enumerate(zip(indices[0], distances[0])):
+                    if _id == -1:
+                        continue
+                    doc_id = self.index_to_docstore_id[_id]
+                    if doc_id in self.docstore._dict:
+                        doc = self.docstore._dict[doc_id]
+                        docs_and_scores.append((doc, dist))
+                    # else: skip corrupted document
+                
+                # Apply filter if provided
+                if filter:
+                    if callable(filter):
+                        docs_and_scores = [
+                            (doc, score) for doc, score in docs_and_scores
+                            if filter(doc.metadata)
+                        ]
+                    else:
+                        docs_and_scores = [
+                            (doc, score) for doc, score in docs_and_scores
+                            if _filter_apply(doc.metadata, filter)
+                        ]
+                
+                # Apply score threshold if provided
+                score_threshold = kwargs.get("score_threshold")
+                if score_threshold is not None:
+                    docs_and_scores = [
+                        (doc, score) for doc, score in docs_and_scores
+                        if score <= score_threshold
+                    ]
+                
+                # Return top k results
+                return docs_and_scores[:k]
+            raise
+
+    # Override async version to handle corrupted index
+    async def asimilarity_search_with_score_by_vector(
+        self,
+        embedding: List[float],
+        k: int = 4,
+        filter: Optional[Union[Callable, Dict[str, Any]]] = None,
+        fetch_k: int = 20,
+        **kwargs: Any,
+    ) -> List[Tuple[Document, float]]:
+        # This is a temporary workaround to make the similarity search asynchronous.
+        # Use run_in_executor but with our overridden sync method
+        return await run_in_executor(
+            None,
+            self.similarity_search_with_score_by_vector,
+            embedding,
+            k=k,
+            filter=filter,
+            fetch_k=fetch_k,
+            **kwargs,
+        )
 
 
 class Memory:
