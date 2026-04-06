@@ -758,6 +758,15 @@ class Agent:
     ):
         model = self.get_utility_model()
 
+        # defensive: if model resolution fails, return empty string
+        if model is None:
+            self.context.log.log(
+                type="warning",
+                heading="Utility model unavailable",
+                content="build_utility_model returned None — skipping utility call.",
+            )
+            return ""
+
         # call extensions
         call_data = {
             "model": model,
