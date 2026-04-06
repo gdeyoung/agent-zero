@@ -875,7 +875,11 @@ class Agent:
         # Only validate when extraction produced an object; None means no JSON tool
         # block was found — the misformat warning path below handles that.
         if tool_request is not None:
-            await self.validate_tool_request(tool_request)
+            try:
+                await self.validate_tool_request(tool_request)
+            except ValueError:
+                # Malformed JSON from LLM — treat as misformat, not fatal crash
+                tool_request = None
 
         if tool_request is not None:
             raw_tool_name = tool_request.get("tool_name", tool_request.get("tool",""))  # Get the raw tool name
