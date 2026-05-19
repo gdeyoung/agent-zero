@@ -2107,12 +2107,27 @@ const model = {
     if (width < 320 || height < 220) return;
     const key = `${token}:${width}x${height}`;
     const refreshFrameOnly = () => {
-      const client = frame?.contentWindow?.XPRA_CLIENT?.client;
-      if (client) client.__a0ViewportResizing = true;
-      try {
+      const client = frame?.contentWindow?.client;
+      if (!client) {
         this.applyXpraDesktopFrameMode(frame, { requestServerResize: false, requestRefresh: false });
+        return;
+      }
+      client.__a0ViewportResizing = true;
+      try {
+        const remoteWindow = frame?.contentWindow;
+        const container = client.container || remoteWindow?.document?.querySelector?.("#screen");
+        const width = Math.floor(container?.clientWidth || remoteWindow?.innerWidth || frame?.contentWindow?.innerWidth || 1024);
+        const height = Math.floor(container?.clientHeight || remoteWindow?.innerHeight || frame?.contentWindow?.innerHeight || 768);
+        if (width > 0 && height > 0) {
+          client.desktop_width = width;
+          client.desktop_height = height;
+        }
+        this.applyXpraDesktopFrameMode(frame, { requestServerResize: false, requestRefresh: false });
+        if (typeof client._screen_resized === "function") {
+          client._screen_resized(new Event("resize"));
+        }
       } finally {
-        if (client) client.__a0ViewportResizing = false;
+        client.__a0ViewportResizing = false;
       }
     };
     if (!serverResize) {
