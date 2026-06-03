@@ -371,7 +371,9 @@ class Agent:
 
     @extension.extensible
     async def monologue(self):
-        while True:
+        MAX_OUTER_ITERATIONS = 100  # Lockup Guard: prevent infinite outer loop
+        MAX_INNER_ITERATIONS = 200  # Lockup Guard: prevent infinite inner loop
+        for _outer in range(MAX_OUTER_ITERATIONS):
             try:
                 # loop data dictionary to pass to extensions
                 self.loop_data = LoopData(user_message=self.last_user_message)
@@ -383,7 +385,7 @@ class Agent:
                 printer = PrintStyle(italic=True, font_color="#b3ffd9", padding=False)
 
                 # let the agent run message loop until he stops it with a response tool
-                while True:
+                for _inner in range(MAX_INNER_ITERATIONS):
 
                     self.context.streaming_agent = self  # mark self as current streamer
                     self.loop_data.iteration += 1

@@ -260,7 +260,7 @@ class SchedulerTool(Tool):
             return Response(message=f"Task not found: {task_uuid}", break_loop=False)
 
         update_params: dict[str, Any] = {}
-        for field in ("name", "system_prompt", "prompt", "attachments"):
+        for field in ("name", "system_prompt", "prompt", "attachments", "agent_profile"):
             if field in kwargs:
                 update_params[field] = kwargs[field]
 

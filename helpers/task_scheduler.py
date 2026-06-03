@@ -169,6 +169,9 @@ class BaseTask(BaseModel):
     attachments: list[str] = Field(default_factory=list)
     project_name: str | None = Field(default=None)
     project_color: str | None = Field(default=None)
+    agent_profile: str | None = Field(default=None)
+    enabled: bool = Field(default=True)
+    dedicated_context: bool = Field(default=False)
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
     last_run: datetime | None = None
@@ -823,11 +826,13 @@ class TaskScheduler:
         if not task.context_id:
             raise ValueError(f"Task {task.name} has no context ID")
 
-        config = initialize_agent()
+        # Use task's agent_profile if set, otherwise global default
+        profile = getattr(task, 'agent_profile', None) or None
+        if profile:
+            config = initialize_agent(override_settings={"agent_profile": profile})
+        else:
+            config = initialize_agent()
         context: AgentContext = AgentContext(config, id=task.context_id, name=task.name)
-        # context.id = task.context_id
-        # initial name before renaming is same as task name
-        # context.name = task.name
 
         # Activate project if set
         if task.project_name:
@@ -1192,6 +1197,7 @@ def serialize_task(task: Union[ScheduledTask, AdHocTask, PlannedTask]) -> Dict[s
         "last_result": task.last_result,
         "context_id": task.context_id,
         "dedicated_context": task.is_dedicated(),
+        "agent_profile": task.agent_profile,
         "project": {
             "name": task.project_name,
             "color": task.project_color,

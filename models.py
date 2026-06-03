@@ -610,22 +610,51 @@ class LiteLLMEmbeddingWrapper(Embeddings):
         self.a0_model_conf = model_config
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        # Apply rate limiting if configured
+        max_chars = 20000
+        texts = [t[:max_chars] if len(t) > max_chars else t for t in texts]
         apply_rate_limiter_sync(self.a0_model_conf, " ".join(texts))
-
         resp = embedding(model=self.model_name, input=texts, **self.kwargs)
         return [
-            item.get("embedding") if isinstance(item, dict) else item.embedding  # type: ignore
-            for item in resp.data  # type: ignore
+            item.get("embedding") if isinstance(item, dict) else item.embedding
+            for item in resp.data
         ]
 
-    def embed_query(self, text: str) -> List[float]:
-        # Apply rate limiting if configured
-        apply_rate_limiter_sync(self.a0_model_conf, text)
 
-        resp = embedding(model=self.model_name, input=[text], **self.kwargs)
-        item = resp.data[0]  # type: ignore
-        return item.get("embedding") if isinstance(item, dict) else item.embedding  # type: ignore
+    def embed_query(self, text: str) -> List[float]:
+        max_chars = 600
+        overlap = 100
+        if len(text) <= max_chars:
+            apply_rate_limiter_sync(self.a0_model_conf, text)
+            resp = embedding(model=self.model_name, input=[text], **self.kwargs)
+            item = resp.data[0]
+            return item.get("embedding") if isinstance(item, dict) else item.embedding
+        # Chunk and average: preserve ALL semantic content
+        chunks = []
+        start = 0
+        while start < len(text):
+            end = min(start + max_chars, len(text))
+            chunks.append(text[start:end])
+            if end >= len(text):
+                break
+            start += max_chars - overlap
+        apply_rate_limiter_sync(self.a0_model_conf, " ".join(chunks))
+        resp = embedding(model=self.model_name, input=chunks, **self.kwargs)
+        vectors = [
+            item.get("embedding") if isinstance(item, dict) else item.embedding
+            for item in resp.data
+        ]
+        # Weighted average: first and last chunks get extra weight
+        dim = len(vectors[0])
+        avg = [0.0] * dim
+        total_weight = 0.0
+        for i, vec in enumerate(vectors):
+            weight = 1.2 if (i == 0 or i == len(vectors) - 1) else 1.0
+            for d in range(dim):
+                avg[d] += vec[d] * weight
+            total_weight += weight
+        return [v / total_weight for v in avg]
+
+
 
 
 class LocalSentenceTransformerWrapper(Embeddings):
